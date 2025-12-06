@@ -2,50 +2,37 @@
 import Dexie, { Table } from 'dexie';
 
 export interface Context {
-    id: string;
+    id?: string;
     name: string;
-    description?: string;
     created: Date;
     lastUsed: Date;
 }
 
 export interface Video {
-    id: string;
+    id?: string;
     contextId: string;
     url: string;
     videoId: string;
-    title: string;
-    added: Date;
+    title?: string;  // ← Add this
     analysis: {
         summary: string;
-        entities: Array<{ name: string; type: string; mentions: number }>;
         topics: string[];
-        transcript?: string;
-        embedding?: number[];
+        entities: { name: string; type: string }[];
+        keyPoints?: string[];
     };
+    created?: Date;
+    added?: Date;  // ← Add this too if used
 }
 
-export interface Draft {
-    id: string;
-    contextId: string;
-    subject: string;
-    body: string;
-    sources: Array<{ videoIndex: number; timestamp: string; usedFor: string }>;
-    created: Date;
-}
-
-class ManifoldDB extends Dexie {
+export class ManifoldDB extends Dexie {
     contexts!: Table<Context>;
     videos!: Table<Video>;
-    drafts!: Table<Draft>;
 
     constructor() {
         super('manifold');
-
         this.version(1).stores({
-            contexts: 'id, name, created, lastUsed',
-            videos: 'id, contextId, url, videoId, added',
-            drafts: 'id, contextId, created'
+            contexts: 'id, name, created',
+            videos: 'id, contextId, videoId, created'
         });
     }
 }

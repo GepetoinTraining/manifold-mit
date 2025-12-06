@@ -1,113 +1,174 @@
 // lib/gemini.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export const models = {
-    pro: genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-exp',
-        generationConfig: { responseMimeType: 'application/json' }
-    }),
+    // Try different model name formats
     flash: genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-exp',
-        generationConfig: { responseMimeType: 'application/json' }
-    })
+        model: 'gemini-2.5-flash',  // More stable, definitely works
+        generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2048,
+        }
+    }),
+    pro: genAI.getGenerativeModel({
+        model: 'gemini-2.5-pro',    // More stable, definitely works
+        generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 4096,
+        }
+    }),
+    embed: genAI.getGenerativeModel({
+        model: 'gemini-embedding-001',
+    }),
 };
 
 // Video Analysis (parallel tasks)
 export async function analyzeVideo(transcript: string) {
-    const [summary, entities, topics] = await Promise.all([
-        analyzeSummary(transcript),
-        analyzeEntities(transcript),
-        analyzeTopics(transcript)
-    ]);
-
-    return { summary, entities, topics };
+    try {
+        const [summary, entities, topics] = await Promise.all([
+            analyzeSummary(transcript),
+            analyzeEntities(transcript),
+            analyzeTopics(transcript)
+        ]);
+        return { summary, entities, topics };
+    } catch (error: any) {
+        console.error('analyzeVideo error:', error.message);
+        throw error;
+    }
 }
 
 async function analyzeSummary(transcript: string) {
-    const prompt = `Summarize this transcript in 500 chars max: ${transcript}`;
-    const result = await models.flash.generateContent(prompt);
-    return result.response.text();
+    try {
+        const prompt = `Summarize this transcript in 500 chars max: ${transcript.slice(0, 5000)}`;
+        const result = await models.flash.generateContent(prompt);
+        return result.response.text();
+    } catch (error: any) {
+        console.error('analyzeSummary error:', error.message);
+        return 'Summary unavailable';
+    }
 }
 
 async function analyzeEntities(transcript: string) {
-    const prompt = `
-Extract entities from transcript. Return JSON:
-{
-  "entities": [
-    {"name": "string", "type": "person|organization|concept", "mentions": number}
-  ]
-}
+    try {
+        const prompt = `
+Extract entities from transcript. Return ONLY valid JSON, no markdown:
+{"entities": [{"name": "string", "type": "person|organization|concept", "mentions": 1}]}
 
-Transcript: ${transcript}
+Transcript: ${transcript.slice(0, 5000)}
 `;
-
-    const result = await models.flash.generateContent(prompt);
-    return JSON.parse(result.response.text());
+        const result = await models.flash.generateContent(prompt);
+        const text = result.response.text().replace(/```json\n?|\n?```/g, '').trim();
+        return JSON.parse(text);
+    } catch (error: any) {
+        console.error('analyzeEntities error:', error.message);
+        return { entities: [] };
+    }
 }
 
 async function analyzeTopics(transcript: string) {
-    const prompt = `
-Extract main topics. Return JSON:
-{"topics": ["topic1", "topic2", ...]}
+    try {
+        const prompt = `
+Extract main topics. Return ONLY valid JSON, no markdown:
+{"topics": ["topic1", "topic2"]}
 
-Transcript: ${transcript}
+Transcript: ${transcript.slice(0, 5000)}
 `;
-
-    const result = await models.flash.generateContent(prompt);
-    return JSON.parse(result.response.text());
+        const result = await models.flash.generateContent(prompt);
+        const text = result.response.text().replace(/```json\n?|\n?```/g, '').trim();
+        return JSON.parse(text);
+    } catch (error: any) {
+        console.error('analyzeTopics error:', error.message);
+        return { topics: [] };
+    }
 }
 
-// Cross-reference (synthesis task)
+export async function generateSmartSummary(
+    transcript: string,
+    existingContext: { topics: string[]; entities: string[] }
+) {
+    const prompt = `
+Summarize this video for someone who already knows: ${existingContext.topics.join(', ') || 'nothing yet'}
+
+TRANSCRIPT:
+${transcript.slice(0, 8000)}
+
+Return ONLY valid JSON, no markdown:
+{"tldr": "1-2 sentences", "newInsights": [], "connections": [], "complexity": 5}
+`;
+
+    const result = await models.pro.generateContent(prompt);
+    const text = result.response.text().replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(text);
+}
+
 export async function findConnections(videos: any[]) {
     const prompt = `
 Given these video analyses, find connections:
 ${JSON.stringify(videos, null, 2)}
 
-Return JSON:
-{
-  "connections": [
-    {
-      "video1": 0,
-      "video2": 1,
-      "relation": "string",
-      "concepts": ["shared1", "shared2"],
-      "strength": 0.0-1.0
-    }
-  ]
-}
+Return ONLY valid JSON, no markdown:
+{"connections": [{"video1": 0, "video2": 1, "relation": "string", "concepts": [], "strength": 0.5}]}
 `;
 
     const result = await models.pro.generateContent(prompt);
-    return JSON.parse(result.response.text());
+    const text = result.response.text().replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(text);
 }
 
-// Email Synthesis (creative task)
-export async function synthesizeEmail(context: any, prompt: string) {
+export async function synthesizeEmail(
+    context: { videos: any[] },
+    prompt: string,
+    emailChain?: string
+) {
+    const videoContext = context.videos.map((v, i) => `
+Video ${i + 1}: ${v.videoId}
+Summary: ${v.analysis?.summary}
+Topics: ${v.analysis?.topics?.join(', ')}
+Key Points: ${v.analysis?.keyPoints?.join(', ') || 'N/A'}
+`).join('\n');
+
     const systemPrompt = `
-Context from videos:
-${JSON.stringify(context.videos, null, 2)}
+You are helping write an email response based on accumulated video research.
 
-User request: ${prompt}
+VIDEO CONTEXT:
+${videoContext}
 
-Generate email with citations [Video N @ timestamp].
-Return JSON:
+${emailChain ? `EMAIL CHAIN TO RESPOND TO:\n${emailChain}\n` : ''}
+
+USER REQUEST: ${prompt}
+
+Generate a professional email response that:
+1. Synthesizes knowledge from the videos
+2. Includes citations like [Video 1] or [Video 2]
+3. Directly addresses the email chain if provided
+
+Return ONLY valid JSON, no markdown:
 {
-  "subject": "string",
-  "body": "string with citations",
-  "sources": [{"videoIndex": 0, "timestamp": "2:34", "usedFor": "explained X"}],
-  "confidence": 0.0-1.0
+    "subject": "Re: subject line",
+    "body": "email body with [Video N] citations",
+    "sources": [
+        {"videoIndex": 1, "usedFor": "explanation of what was cited"}
+    ],
+    "confidence": 0.85
 }
 `;
 
     const result = await models.pro.generateContent(systemPrompt);
-    return JSON.parse(result.response.text());
+    const text = result.response.text().replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(text);
 }
 
-// Embedding (for similarity search)
-export async function generateEmbedding(text: string) {
-    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-    const result = await model.embedContent(text);
-    return result.embedding.values;
+
+
+export async function generateEmbedding(text: string): Promise<number[]> {
+    try {
+        const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+        const result = await model.embedContent(text);
+        return result.embedding.values;
+    } catch (error: any) {
+        console.error('Embedding error:', error.message);
+        return [];
+    }
 }

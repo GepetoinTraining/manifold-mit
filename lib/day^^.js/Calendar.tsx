@@ -1,6 +1,6 @@
 import React from 'react';
 import { MatterProps } from './types';
-import { Day } from './DayComponent';
+import { DayComponent as Day } from './DayComponent';
 
 // TODO: Import Button from your atomic system
 // import { Button } from '../atomic/button';

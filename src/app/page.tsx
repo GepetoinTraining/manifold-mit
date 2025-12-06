@@ -1,148 +1,115 @@
-// app/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Container, Stack, Title, TextInput, Button, Card, Text, Loader, Badge, Group } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
-import { IconVideo, IconSparkles } from '@tabler/icons-react';
-import { db } from '../../lib/db';
-import { Security } from '../../lib/security';
+import { Suspense } from 'react';
+import { Container, Title, Text, Group, Stack, Tabs } from '@mantine/core';
+import { IconVideo, IconMail, IconFileText, IconLogin, IconUserPlus } from '@tabler/icons-react';
+import { Button } from '../../lib/manifold/components';
+import { VideoAnalyzer } from '../components/VideoAnalyzer';
+import { EmailWriter } from '../components/EmailWriter';
+import { SmartSummary } from '../components/SmartSummary';
+import { AuthModal } from '../components/AuthModal';
+import { useAuth } from '../hooks/useAuth';
+import { useSources } from '../hooks/useSources';
+import { useState } from 'react';
 
-export default function Dashboard() {
-  const [cert, setCert] = useState<string>('');
-  const [url, setUrl] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [videos, setVideos] = useState<any[]>([]);
-
-  // Generate/load cert on mount
-  useEffect(() => {
-    let storedCert = localStorage.getItem('manifold_cert');
-
-    if (!storedCert) {
-      const security = new Security();
-      storedCert = security.mint({ lat: -26.3, lng: -48.8 }); // Joinville
-      localStorage.setItem('manifold_cert', storedCert);
-    }
-
-    setCert(storedCert);
-    loadVideos();
-  }, []);
-
-  async function loadVideos() {
-    const allVideos = await db.videos.toArray();
-    setVideos(allVideos);
-  }
-
-  async function handleAnalyze() {
-    if (!url || !cert) return;
-
-    setLoading(true);
-
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cert, url })
-      });
-
-      if (!res.ok) throw new Error('Analysis failed');
-
-      const { videoId, analysis } = await res.json();
-
-      // Store in IndexedDB
-      await db.videos.add({
-        id: crypto.randomUUID(),
-        contextId: 'default', // For now, single context
-        url,
-        videoId,
-        title: `Video ${videoId}`,
-        analysis,
-        added: new Date()
-      });
-
-      notifications.show({
-        title: 'Analysis Complete',
-        message: 'Video added to your context',
-        color: 'green'
-      });
-
-      setUrl('');
-      await loadVideos();
-
-    } catch (error: any) {
-      notifications.show({
-        title: 'Error',
-        message: error.message,
-        color: 'red'
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
+function LandingContent() {
+  const { cert, isAuthenticated, login, register, logout } = useAuth();
+  const { sources, selectedSources, addVideoSource } = useSources();
+  const [authModal, setAuthModal] = useState<'login' | 'register' | null>(null);
 
   return (
     <Container size="lg" py="xl">
-      <Stack gap="xl">
+      {/* Header */}
+      <Group justify="space-between" mb="xl">
         <div>
           <Title order={1}>Manifold</Title>
-          <Text c="dimmed" size="sm">Context accumulation engine</Text>
+          <Text c="dimmed">Context accumulation engine</Text>
         </div>
-
-        {/* Add Video */}
-        <Card shadow="sm" padding="lg" radius="md" withBorder>
-          <Stack gap="md">
-            <TextInput
-              label="YouTube URL"
-              placeholder="https://youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              leftSection={<IconVideo size={16} />}
-              disabled={loading}
-            />
-
-            <Button
-              onClick={handleAnalyze}
-              loading={loading}
-              leftSection={<IconSparkles size={16} />}
-              fullWidth
-            >
-              Analyze Video
-            </Button>
-          </Stack>
-        </Card>
-
-        {/* Video List */}
-        <Stack gap="md">
-          <Title order={2} size="h3">Videos ({videos.length})</Title>
-
-          {videos.length === 0 && (
-            <Text c="dimmed" ta="center" py="xl">
-              No videos yet. Add one above to get started.
-            </Text>
+        <Group>
+          {isAuthenticated ? (
+            <>
+              <Button
+                physics={{ density: 'energy', temperature: 'cold' }}
+                onClick={() => { window.location.href = '/dashboard'; }}
+              >
+                Dashboard
+              </Button>
+              <Button
+                physics={{ density: 'gas', temperature: 'cold' }}
+                onClick={logout}
+              >
+                Logout
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                physics={{ density: 'energy', temperature: 'warm' }}
+                leftSection={<IconLogin size={16} />}
+                onClick={() => setAuthModal('login')}
+              >
+                Login
+              </Button>
+              <Button
+                physics={{ density: 'solid', temperature: 'hot' }}
+                leftSection={<IconUserPlus size={16} />}
+                onClick={() => setAuthModal('register')}
+              >
+                Register
+              </Button>
+            </>
           )}
+        </Group>
+      </Group>
 
-          {videos.map((video) => (
-            <Card key={video.id} shadow="sm" padding="md" radius="md" withBorder>
-              <Stack gap="xs">
-                <Group justify="space-between">
-                  <Text fw={500}>{video.title}</Text>
-                  <Badge size="sm">{video.videoId}</Badge>
-                </Group>
+      {/* Auth Modal */}
+      <AuthModal
+        opened={authModal !== null}
+        mode={authModal || 'login'}
+        onClose={() => setAuthModal(null)}
+        onLogin={login}
+        onRegister={register}
+        onSwitchMode={setAuthModal}
+      />
 
-                <Text size="sm" c="dimmed" lineClamp={2}>
-                  {video.analysis.summary}
-                </Text>
+      {/* Main Content */}
+      <Tabs defaultValue="video">
+        <Tabs.List grow mb="xl">
+          <Tabs.Tab value="video" leftSection={<IconVideo size={16} />}>
+            Video Analysis
+          </Tabs.Tab>
+          <Tabs.Tab value="email" leftSection={<IconMail size={16} />}>
+            Email Writer
+          </Tabs.Tab>
+          <Tabs.Tab value="summary" leftSection={<IconFileText size={16} />}>
+            Smart Summary
+          </Tabs.Tab>
+        </Tabs.List>
 
-                <Group gap="xs">
-                  {video.analysis.topics?.slice(0, 3).map((topic: string, i: number) => (
-                    <Badge key={i} size="xs" variant="light">{topic}</Badge>
-                  ))}
-                </Group>
-              </Stack>
-            </Card>
-          ))}
-        </Stack>
-      </Stack>
+        <Tabs.Panel value="video">
+          <VideoAnalyzer cert={cert} onAnalyzed={addVideoSource} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="email">
+          <EmailWriter cert={cert} selectedSources={selectedSources} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="summary">
+          <SmartSummary cert={cert} selectedSources={selectedSources} />
+        </Tabs.Panel>
+      </Tabs>
+
+      <Text c="dimmed" ta="center" mt="xl" size="sm">
+        {isAuthenticated ? 'Your context is being accumulated.' : 'Login to save your context across sessions.'}
+      </Text>
     </Container>
+  );
+}
+
+export default function Landing() {
+  return (
+    <Suspense fallback={<Container py="xl"><Text>Loading...</Text></Container>}>
+      <LandingContent />
+    </Suspense>
   );
 }

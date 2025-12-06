@@ -1,5 +1,5 @@
 // app/api/auth/cert/route.ts
-import { Security } from '@/lib/security';
+import { Security } from '../../../../../lib/security';
 
 export async function POST(req: Request) {
     const { lat, lng } = await req.json();
