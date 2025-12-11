@@ -33,6 +33,7 @@ export function VideoAnalyzer({ cert, onAnalyzed }: VideoAnalyzerProps) {
             }
 
             const video = {
+                id: crypto.randomUUID(),  // <--- ADD THIS LINE
                 contextId: 'default',
                 url,
                 videoId: data.videoId,
